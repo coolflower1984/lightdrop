@@ -85,7 +85,6 @@ public class WxFiles {
         add(list, new File(ext, "tencent/MicroMsg/WeiXin"));
         add(list, new File(ext, "Android/data/com.tencent.mm/MicroMsg/Download"));
         add(list, new File(ext, "Android/data/com.tencent.mm/MicroMsg/WeiXin"));
-        add(list, new File(ext, "Android/data/com.tencent.mm/MicroMsg/xlog"));
         return list;
     }
 

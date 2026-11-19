@@ -102,9 +102,7 @@ public class WxPickActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        if (!WxFiles.hasPermission(this)) {
-            permCard.setVisibility(View.VISIBLE);
-        }
+        permCard.setVisibility(WxFiles.hasPermission(this) ? View.GONE : View.VISIBLE);
     }
 
     private void switchTab(boolean wx) {
