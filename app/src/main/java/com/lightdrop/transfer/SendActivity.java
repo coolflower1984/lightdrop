@@ -260,16 +260,17 @@ public class SendActivity extends Activity {
         if (scanning || isFinishing() || isDestroyed()) return;
         scanning = true;
         tvSearchStatus.setText("正在搜索同一 Wi-Fi 下的设备…");
-        final String selfIp = Util.localIp();
+        final List<String> selfIps = Util.localIps();
         new Thread(() -> {
-            List<DiscoveryClient.Device> list = DiscoveryClient.scan(900);
+            List<DiscoveryClient.Device> list = DiscoveryClient.scan(getApplicationContext(), 1500);
             if (list.isEmpty()) {
                 ui.post(() -> {
                     if (!isFinishing()) {
-                        tvSearchStatus.setText("广播没响应，正在逐个扫描 " + selfIp + " 所在网段…");
+                        tvSearchStatus.setText("广播没响应，正在逐个扫描 "
+                                + (selfIps.isEmpty() ? "本机" : selfIps.get(0)) + " 所在网段…");
                     }
                 });
-                list = DiscoveryClient.sweep(selfIp, 5000);
+                list = DiscoveryClient.sweep(selfIps, 9000);
             }
             final List<DiscoveryClient.Device> result = list;
             ui.post(() -> {
@@ -277,7 +278,7 @@ public class SendActivity extends Activity {
                 if (isFinishing()) return;
                 List<DiscoveryClient.Device> filtered = new ArrayList<>();
                 for (DiscoveryClient.Device d : result) {
-                    if (!d.ip.equals(selfIp)) filtered.add(d);
+                    if (!selfIps.contains(d.ip)) filtered.add(d);
                 }
                 renderDevices(filtered);
             });
@@ -293,13 +294,17 @@ public class SendActivity extends Activity {
                 tvSearchStatus.setText("正在搜索同一 Wi-Fi 下的设备…");
                 ui.postDelayed(this::scan, 2000);
             } else {
-                tvSearchStatus.setText("没找到设备。检查：①两台设备连的是同一个 Wi-Fi（不是访客网络）"
-                        + "②平板上「接收文件」开关是打开的 ③平板的微信/系统没把轻传的后台限制掉");
+                String me = Util.localIp();
+                tvSearchStatus.setText("没找到设备 · 本机 " + me
+                        + "。请确认：①两台设备连的是同一个 Wi-Fi（不是访客网络 / 蜂窝）"
+                        + "②平板上「接收文件」开关是开着的，页面会显示一串地址"
+                        + "③还不行就在下面直接输平板显示的地址");
             }
             return;
         }
         autoRetries = 0;
         Ui.gone(emptyHint, true);
+        tvSearchStatus.setText("找到 " + list.size() + " 台设备 · 点一下就开始发");
         for (DiscoveryClient.Device d : list) {
             deviceContainer.addView(deviceRow(d));
         }
@@ -342,15 +347,43 @@ public class SendActivity extends Activity {
     }
 
     private void connectManual() {
-        String raw = etIp.getText().toString().trim();
-        DiscoveryClient.Device d = DiscoveryClient.parse(raw);
-        if (d == null) {
-            Toast.makeText(this, "请输入正确的 IP 地址，如 192.168.1.23", Toast.LENGTH_SHORT).show();
+        final String raw = etIp.getText().toString().trim();
+        final DiscoveryClient.Device parsed = DiscoveryClient.parse(raw);
+        if (parsed == null) {
+            Toast.makeText(this, "请输入平板页面上显示的地址，如 192.168.1.23", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (items.isEmpty()) {
+            Toast.makeText(this, "先选择要发送的文件", Toast.LENGTH_SHORT).show();
+            pickFromWx();
+            return;
+        }
+        if (busy) {
+            Toast.makeText(this, "正在发送中，请稍候", Toast.LENGTH_SHORT).show();
             return;
         }
         InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
         if (imm != null) imm.hideSoftInputFromWindow(etIp.getWindowToken(), 0);
-        sendTo(d.ip, d.port, d.name);
+
+        // 先握手确认这个地址上真的有轻传在跑，顺便拿到真实端口。
+        // 直接盲连的话，端口不对只会得到「超时」这种没用的提示。
+        tvSearchStatus.setText("正在连接 " + parsed.ip + " …");
+        new Thread(() -> {
+            final DiscoveryClient.Device found = DiscoveryClient.probeAny(parsed.ip, parsed.port);
+            ui.post(() -> {
+                if (isFinishing()) return;
+                if (found == null) {
+                    tvSearchStatus.setText("连不上 " + parsed.ip
+                            + "：这个地址上没有轻传在监听。检查地址是否输错、平板是否已开启接收");
+                    Toast.makeText(SendActivity.this,
+                            "连不上 " + parsed.ip + "，请确认平板上的地址和开关",
+                            Toast.LENGTH_LONG).show();
+                } else {
+                    tvSearchStatus.setText("已找到 " + found.label() + " · " + found.ip + ":" + found.port);
+                    sendTo(found.ip, found.port, found.name);
+                }
+            });
+        }, "ld-probe").start();
     }
 
     // ---------------- 发送 ----------------

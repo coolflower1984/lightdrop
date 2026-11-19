@@ -51,7 +51,8 @@ public class TransferServer {
 
     private ServerSocket serverSocket;
     private DiscoveryResponder responder;
-    private final ExecutorService pool = Executors.newCachedThreadPool();
+    /** 固定线程池：扫描时可能有几百个探测连接同时进来，无界线程池会直接 OOM。 */
+    private final ExecutorService pool = Executors.newFixedThreadPool(24);
     private volatile boolean running;
     private volatile boolean stopped;
     private volatile int port = Protocol.TCP_PORT;
@@ -81,7 +82,7 @@ public class TransferServer {
             }
             port = serverSocket.getLocalPort();
             running = true;
-            responder = new DiscoveryResponder(deviceName, port);
+            responder = new DiscoveryResponder(ctx, deviceName, port);
             responder.start();
             if (listener != null) listener.onListening(port, deviceName);
         } catch (Exception e) {
@@ -125,7 +126,9 @@ public class TransferServer {
         Incoming cur = null;
         try {
             socket.setTcpNoDelay(true);
-            socket.setSoTimeout(20000);
+            // 握手阶段给 8 秒就够了；20 秒会让半开连接把线程池占满，
+            // 后面的探测请求全部排队，表现就是「连不上」。
+            socket.setSoTimeout(8000);
 
             // 先看前 4 个字节：HTTP 请求（GET/POST）走网页上传，其余走二进制协议。
             java.io.PushbackInputStream pis = new java.io.PushbackInputStream(

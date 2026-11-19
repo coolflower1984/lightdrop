@@ -72,6 +72,7 @@ public class ReceiveActivity extends Activity implements TransferServer.Listener
         findViewById(R.id.btn_back).setOnClickListener(v -> finish());
         findViewById(R.id.btn_copy).setOnClickListener(v -> copyAddress());
         findViewById(R.id.btn_open_folder).setOnClickListener(v -> openFolder());
+        findViewById(R.id.btn_selftest).setOnClickListener(v -> selfTest());
 
         sw.setOnCheckedChangeListener((buttonView, isChecked) -> {
             if (syncing) return;
@@ -130,6 +131,15 @@ public class ReceiveActivity extends Activity implements TransferServer.Listener
         ui.postDelayed(this::syncFromReceiver, 900);
     }
 
+    /** 显示「IP:端口」，网页上传也需要带上端口。 */
+    private String addressText(int port) {
+        java.util.List<String> ips = Util.localIps();
+        if (ips.isEmpty()) return "未连接网络";
+        String ip = ips.get(0);
+        if (port <= 0) return ip;
+        return ip + ":" + port;
+    }
+
     private void stopReceiving() {
         ReceiveService.stop(this);
         Ui.gone(liveCard, true);
@@ -166,9 +176,10 @@ public class ReceiveActivity extends Activity implements TransferServer.Listener
         }
         if (running) {
             int port = receiver.port();
-            String ip = Util.localIp();
-            tvIp.setText(port > 0 && port != 46000 ? ip + ":" + port : ip);
-            tvDevName.setText("设备名：" + receiver.deviceName());
+            String addr = addressText(port);
+            tvIp.setText(addr);
+            tvDevName.setText("设备名：" + receiver.deviceName()
+                    + (port > 0 ? " · 浏览器打开 http://" + addr + " 也能上传" : ""));
             Ui.gone(liveCard, false);
             tvSwitchDesc.setText("已在后台接收，可锁屏或切到其他应用");
         } else if (sw.isChecked()) {
@@ -200,14 +211,43 @@ public class ReceiveActivity extends Activity implements TransferServer.Listener
         }
     }
 
+    /** 本机自检：直接连自己一次，确认协议链路真的通了。 */
+    private void selfTest() {
+        final int port = receiver.port();
+        if (port <= 0) {
+            Toast.makeText(this, "接收服务还没启动，先把上面的开关打开", Toast.LENGTH_LONG).show();
+            return;
+        }
+        Toast.makeText(this, "正在自检…", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            final com.lightdrop.transfer.net.DiscoveryClient.Device d =
+                    com.lightdrop.transfer.net.DiscoveryClient.probe("127.0.0.1", port, 2000);
+            ui.post(() -> {
+                if (isFinishing()) return;
+                StringBuilder sb = new StringBuilder();
+                sb.append("接收服务：").append(d != null ? "正常，已验证到「" + d.name + "」" : "无响应");
+                sb.append("\n监听端口：").append(port);
+                sb.append("\n本机地址：").append(android.text.TextUtils.join(" / ", Util.localIps()));
+                sb.append("\n\n如果这里显示「正常」，说明平板这边没问题，");
+                sb.append("连不上就是两台设备网络不通：检查是否同一个 Wi-Fi、路由器有没有开「AP 隔离」、");
+                sb.append("或者改用手机浏览器打开 http://").append(Util.localIp()).append(':').append(port);
+                new android.app.AlertDialog.Builder(this)
+                        .setTitle("自检结果")
+                        .setMessage(sb.toString())
+                        .setPositiveButton("知道了", null)
+                        .show();
+            });
+        }, "ld-selftest").start();
+    }
+
     // ---------------- 服务事件（非 UI 线程） ----------------
 
     @Override
     public void onListening(final int port, final String deviceName) {
         ui.post(() -> {
-            String ip = Util.localIp();
-            tvIp.setText(port == 46000 ? ip : ip + ":" + port);
-            tvDevName.setText("设备名：" + deviceName);
+            String addr = addressText(port);
+            tvIp.setText(addr);
+            tvDevName.setText("设备名：" + deviceName + " · 浏览器打开 http://" + addr + " 也能上传");
             Ui.gone(liveCard, false);
             tvSwitchDesc.setText("已在后台接收，可锁屏或切到其他应用");
             syncing = true;

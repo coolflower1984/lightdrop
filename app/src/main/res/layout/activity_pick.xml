@@ -59,7 +59,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="需要「所有文件访问」权限"
+            android:text="看不到微信聊天里的文件？"
             android:textColor="@color/text_primary"
             android:textSize="14sp"
             android:textStyle="bold" />
@@ -68,10 +68,18 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp"
-            android:lineSpacingExtra="2dp"
-            android:text="微信把聊天文件存在自己的私有目录里，不授权这里就看不到。授权后微信里「保存到手机」的文件会直接出现在下方列表。"
+            android:lineSpacingExtra="3dp"
+            android:text="Android 11 起，系统禁止任何 App 直接读微信的聊天缓存目录，这不是权限问题，装了「所有文件访问」也绕不过。&#10;&#10;两个可行办法：&#10;① 微信里长按文件 →「保存到手机」，几秒后出现在下方列表；&#10;② 微信里点开文件 → 右上角 … →「用其他应用打开」→ 选「轻传」，直接发。"
             android:textColor="@color/text_secondary"
             android:textSize="12sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="开启「所有文件访问」后，能读到微信保存在手机里的那部分文件（Download、tencent、Android/media 下的），列表会更全。"
+            android:textColor="@color/text_tertiary"
+            android:textSize="11sp" />
 
         <TextView
             android:id="@+id/btn_perm"
@@ -80,7 +88,7 @@
             android:layout_marginTop="12dp"
             android:background="@drawable/btn_primary"
             android:gravity="center"
-            android:text="去开启"
+            android:text="去开启「所有文件访问」"
             android:textColor="@color/white"
             android:textSize="14sp" />
     </LinearLayout>
@@ -171,7 +179,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
                     android:lineSpacingExtra="4dp"
-                    android:text="在微信里长按文件 → 保存到手机，几秒后会出现在这里。&#10;也可以直接点右上角「浏览…」从系统文件管理器挑。"
+                    android:text="没有找到文件。&#10;&#10;微信里长按文件 →「保存到手机」，几秒后会出现在这里。&#10;也可以点右上角「浏览…」直接从手机里挑。"
                     android:textColor="@color/text_secondary"
                     android:textSize="12sp" />
 

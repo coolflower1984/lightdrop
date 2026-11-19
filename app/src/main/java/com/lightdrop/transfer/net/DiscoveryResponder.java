@@ -1,5 +1,6 @@
 package com.lightdrop.transfer.net;
 
+import android.content.Context;
 import android.util.Log;
 
 import org.json.JSONObject;
@@ -15,13 +16,15 @@ public class DiscoveryResponder implements Runnable {
 
     private static final String TAG = "LD-Discovery";
 
+    private final Context ctx;
     private final String deviceName;
     private final int tcpPort;
     private DatagramSocket socket;
     private volatile boolean running;
     private volatile boolean stopped;
 
-    public DiscoveryResponder(String deviceName, int tcpPort) {
+    public DiscoveryResponder(Context ctx, String deviceName, int tcpPort) {
+        this.ctx = ctx == null ? null : ctx.getApplicationContext();
         this.deviceName = deviceName;
         this.tcpPort = tcpPort;
     }
@@ -61,26 +64,32 @@ public class DiscoveryResponder implements Runnable {
             socket.close();
             return;
         }
+        // Wi-Fi 驱动默认丢弃广播帧，不拿这把锁有的机型根本收不到请求
+        android.net.wifi.WifiManager.MulticastLock lock = DiscoveryClient.acquireMulticast(ctx);
         running = true;
         byte[] buf = new byte[512];
-        while (running) {
-            try {
-                DatagramPacket p = new DatagramPacket(buf, buf.length);
-                socket.receive(p);
-                String msg = new String(p.getData(), p.getOffset(), p.getLength(), "UTF-8");
-                if (!msg.startsWith("LIGHTDROP/")) continue;
+        try {
+            while (running) {
+                try {
+                    DatagramPacket p = new DatagramPacket(buf, buf.length);
+                    socket.receive(p);
+                    String msg = new String(p.getData(), p.getOffset(), p.getLength(), "UTF-8");
+                    if (!msg.startsWith("LIGHTDROP/")) continue;
 
-                JSONObject o = new JSONObject();
-                o.put("n", deviceName);
-                o.put("p", tcpPort);
-                o.put("v", Protocol.VERSION);
-                byte[] out = (o.toString() + "\n").getBytes("UTF-8");
-                // 单播回给发送端
-                socket.send(new DatagramPacket(out, out.length, p.getAddress(), p.getPort()));
-            } catch (SocketTimeoutException ignored) {
-            } catch (Exception e) {
-                if (!running) break;
+                    JSONObject o = new JSONObject();
+                    o.put("n", deviceName);
+                    o.put("p", tcpPort);
+                    o.put("v", Protocol.VERSION);
+                    byte[] out = (o.toString() + "\n").getBytes("UTF-8");
+                    // 单播回给发送端
+                    socket.send(new DatagramPacket(out, out.length, p.getAddress(), p.getPort()));
+                } catch (SocketTimeoutException ignored) {
+                } catch (Exception e) {
+                    if (!running) break;
+                }
             }
+        } finally {
+            DiscoveryClient.release(lock);
         }
     }
 }

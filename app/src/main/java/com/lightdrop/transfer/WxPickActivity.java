@@ -38,7 +38,9 @@ public class WxPickActivity extends Activity {
 
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final List<WxFiles.Entry> all = new ArrayList<>();
-    private final Set<String> selected = new LinkedHashSet<>();
+    /** key 用 uri，值保留整个条目，发送时才知道该用 content:// 还是 file://。 */
+    private final java.util.LinkedHashMap<String, WxFiles.Entry> selected =
+            new java.util.LinkedHashMap<>();
 
     private LinearLayout listContainer;
     private View emptyBox, permCard;
@@ -77,7 +79,7 @@ public class WxPickActivity extends Activity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQ_PERM) {
-            permCard.setVisibility(WxFiles.hasPermission(this) ? View.GONE : View.VISIBLE);
+            updatePermCard();
             load();
         } else if (requestCode == REQ_BROWSE && resultCode == RESULT_OK && data != null) {
             List<String> paths = new ArrayList<>();
@@ -102,7 +104,12 @@ public class WxPickActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        permCard.setVisibility(WxFiles.hasPermission(this) ? View.GONE : View.VISIBLE);
+        updatePermCard();
+    }
+
+    private void updatePermCard() {
+        boolean need = !WxFiles.hasPermission(this) || all.isEmpty();
+        permCard.setVisibility(need ? View.VISIBLE : View.GONE);
     }
 
     private void switchTab(boolean wx) {
@@ -120,12 +127,12 @@ public class WxPickActivity extends Activity {
         loading = true;
         tvStatus.setText("正在读取最近文件…");
         new Thread(() -> {
-            final List<WxFiles.Entry> list = WxFiles.recent(this, 7, 300);
+            final List<WxFiles.Entry> list = WxFiles.recent(this, 30, 400);
             ui.post(() -> {
                 loading = false;
                 all.clear();
                 all.addAll(list);
-                permCard.setVisibility(WxFiles.hasPermission(this) ? View.GONE : View.VISIBLE);
+                updatePermCard();
                 render();
             });
         }, "ld-wx-scan").start();
@@ -144,12 +151,12 @@ public class WxPickActivity extends Activity {
 
         if (shown.isEmpty()) {
             emptyBox.setVisibility(View.VISIBLE);
-            tvStatus.setText(wxOnly ? "最近 7 天没有微信文件" : "最近 7 天没有可发送的文件");
+            tvStatus.setText(wxOnly ? "最近 30 天没有微信文件" : "最近 30 天没有可发送的文件");
             return;
         }
         emptyBox.setVisibility(View.GONE);
         tvStatus.setText(String.format(Locale.CHINA,
-                "最近 7 天 · %d 个文件，其中微信文件 %d 个", all.size(), wxCount));
+                "最近 30 天 · 共 %d 个，其中微信 %d 个 · 点一下勾选", all.size(), wxCount));
 
         int limit = Math.min(shown.size(), 200);
         for (int i = 0; i < limit; i++) {
@@ -158,7 +165,7 @@ public class WxPickActivity extends Activity {
     }
 
     private View row(final WxFiles.Entry e) {
-        final boolean on = selected.contains(e.path);
+        final boolean on = selected.containsKey(e.uri);
 
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.HORIZONTAL);
@@ -196,8 +203,8 @@ public class WxPickActivity extends Activity {
         box.addView(mark, new LinearLayout.LayoutParams(Ui.dp(this, 28), Ui.dp(this, 28)));
 
         box.setOnClickListener(v -> {
-            if (selected.contains(e.path)) selected.remove(e.path);
-            else selected.add(e.path);
+            if (selected.containsKey(e.uri)) selected.remove(e.uri);
+            else selected.put(e.uri, e);
             render();
             updateSelected();
         });
@@ -210,14 +217,8 @@ public class WxPickActivity extends Activity {
             return;
         }
         long total = 0;
-        int matched = 0;
-        for (WxFiles.Entry e : all) {
-            if (selected.contains(e.path)) {
-                total += e.size;
-                matched++;
-            }
-        }
-        tvSelected.setText("已选 " + matched + " 个 · 共 " + Util.humanSize(total));
+        for (WxFiles.Entry e : selected.values()) total += e.size;
+        tvSelected.setText("已选 " + selected.size() + " 个 · 共 " + Util.humanSize(total));
     }
 
     private void confirm() {
@@ -226,7 +227,7 @@ public class WxPickActivity extends Activity {
             return;
         }
         Intent out = new Intent();
-        out.putExtra(EXTRA_PATHS, selected.toArray(new String[0]));
+        out.putExtra(EXTRA_PATHS, selected.keySet().toArray(new String[0]));
         setResult(RESULT_OK, out);
         finish();
     }

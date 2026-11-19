@@ -56,10 +56,18 @@ public class ReceiveService extends Service implements TransferServer.Listener {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && ACTION_STOP.equals(intent.getAction())) {
+            // 从通知栏关掉时也记住，免得下次进页面又自动开
+            new Prefs(this).setReceiveAuto(false);
             stopSelf();
             return START_NOT_STICKY;
         }
-        goForeground(buildNotification("轻传已开启接收", "其他设备可发现本机，点此查看", -1));
+        // 前台化失败也要继续跑：Android 14 对 dataSync 类型有限制，
+        // 抛异常时整个服务会被干掉，接收监听也跟着没了。
+        try {
+            goForeground(buildNotification("轻传已开启接收", "其他设备可发现本机，点此查看", -1));
+        } catch (Exception e) {
+            android.util.Log.w("LD-Service", "startForeground failed: " + e);
+        }
 
         Receiver r = Receiver.get(this);
         r.addListener(this);
@@ -187,8 +195,8 @@ public class ReceiveService extends Service implements TransferServer.Listener {
 
     @Override
     public void onListening(int port, String deviceName) {
-        update("轻传已开启接收", "地址 " + com.lightdrop.transfer.core.Util.localIp()
-                + (port == 46000 ? "" : ":" + port) + " · 点此查看", -1);
+        String ip = com.lightdrop.transfer.core.Util.localIp();
+        update("轻传已开启接收", "地址 " + ip + ":" + port + " · 点此查看", -1);
     }
 
     @Override
