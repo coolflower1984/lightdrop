@@ -27,6 +27,13 @@ jobs:
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
             --install "platforms;android-34" "build-tools;34.0.0" > /dev/null
 
+      - name: 检查签名证书
+        run: |
+          if [ -z "${{ secrets.KEYSTORE_BASE64 }}" ]; then
+            echo "::error::缺少 KEYSTORE_BASE64 密钥：用它构建出的包与已发布版本签名不同，无法覆盖安装，已中止"
+            exit 1
+          fi
+
       - name: 还原签名证书
         run: |
           mkdir -p keystore
