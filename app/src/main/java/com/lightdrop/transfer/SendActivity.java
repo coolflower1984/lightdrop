@@ -80,9 +80,8 @@ public class SendActivity extends Activity {
         });
         findViewById(R.id.btn_connect).setOnClickListener(v -> connectManual());
         quickCard.setOnClickListener(v -> {
-            if (prefs.hasLastDevice()) {
-                sendTo(prefs.lastIp(), prefs.lastPort(), prefs.lastName());
-            }
+            if (!prefs.hasLastDevice()) return;
+            quickSend();
         });
 
         refreshFileUi();
@@ -384,6 +383,40 @@ public class SendActivity extends Activity {
                 }
             });
         }, "ld-probe").start();
+    }
+
+    /**
+     * 走「上次设备」的快捷通道。
+     *
+     * 平板重连 Wi-Fi 后 IP 通常会变，直接拿存下来的地址连，只会得到一个
+     * 莫名其妙的「连不上」。所以先探一下，探不到就自动重新搜索。
+     */
+    private void quickSend() {
+        if (busy) {
+            Toast.makeText(this, "正在发送中，请稍候", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (items.isEmpty()) {
+            Toast.makeText(this, "先选择要发送的文件", Toast.LENGTH_SHORT).show();
+            pickFromWx();
+            return;
+        }
+        final String ip = prefs.lastIp();
+        final int port = prefs.lastPort();
+        tvSearchStatus.setText("正在确认 " + ip + " …");
+        new Thread(() -> {
+            final DiscoveryClient.Device found = DiscoveryClient.probeAny(ip, port);
+            ui.post(() -> {
+                if (isFinishing()) return;
+                if (found != null) {
+                    sendTo(found.ip, found.port, found.name);
+                } else {
+                    tvSearchStatus.setText("上次的 " + ip + " 已经失效（IP 变了），正在重新搜索…");
+                    autoRetries = 0;
+                    scan();
+                }
+            });
+        }, "ld-quick").start();
     }
 
     // ---------------- 发送 ----------------
