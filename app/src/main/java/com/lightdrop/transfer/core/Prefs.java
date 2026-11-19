@@ -88,6 +88,36 @@ public class Prefs {
         sp.edit().putBoolean("receive_auto", b).apply();
     }
 
+    // ---- 上次发送过的设备：微信里点一下就能直接发 ----
+
+    public String lastIp() {
+        return sp.getString("last_ip", "");
+    }
+
+    public int lastPort() {
+        return sp.getInt("last_port", 46000);
+    }
+
+    public String lastName() {
+        return sp.getString("last_name", "");
+    }
+
+    public boolean hasLastDevice() {
+        return !TextUtils.isEmpty(lastIp());
+    }
+
+    public void setLastDevice(String ip, int port, String name) {
+        sp.edit()
+                .putString("last_ip", ip == null ? "" : ip)
+                .putInt("last_port", port)
+                .putString("last_name", name == null ? "" : name)
+                .apply();
+    }
+
+    public void clearLastDevice() {
+        sp.edit().remove("last_ip").remove("last_port").remove("last_name").apply();
+    }
+
     public static class Item {
         public String name;
         public String uri;

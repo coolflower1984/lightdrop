@@ -18,14 +18,22 @@ if [ -f "$ROOT/VERSION" ]; then
 fi
 
 if [ -z "${VERSION_NAME:-}" ]; then
+  VERSION_NAME="$FILE_VER"
+fi
+if [ -z "$VERSION_NAME" ]; then
   VERSION_NAME=$(git -C "$ROOT" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)
 fi
-VERSION_NAME=${VERSION_NAME:-${FILE_VER:-1.0.0}}
+VERSION_NAME=${VERSION_NAME:-1.0.0}
+VERSION_NAME=${VERSION_NAME#v}
 
+# versionCode 必须严格递增，所以 VERSION 文件里的第二行优先于 git 提交数
 if [ -z "${VERSION_CODE:-}" ]; then
+  VERSION_CODE="$FILE_CODE"
+fi
+if [ -z "$VERSION_CODE" ]; then
   VERSION_CODE=$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || true)
 fi
-VERSION_CODE=${VERSION_CODE:-${FILE_CODE:-1}}
+VERSION_CODE=${VERSION_CODE:-1}
 
 KEYSTORE="$ROOT/keystore/lightdrop.jks"
 KS_PASS="${KEYSTORE_PASS:-lightdrop2024}"

@@ -127,6 +127,15 @@
                     android:textColor="@color/text_secondary"
                     android:textSize="13sp" />
 
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:lineSpacingExtra="2dp"
+                    android:text="手机搜不到本机时，在手机浏览器地址栏输入「http://」加上面这串地址，也能直接上传文件，不用装 App。"
+                    android:textColor="@color/text_tertiary"
+                    android:textSize="11sp" />
+
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"

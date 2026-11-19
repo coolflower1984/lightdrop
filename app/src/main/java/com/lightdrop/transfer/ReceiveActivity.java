@@ -83,7 +83,10 @@ public class ReceiveActivity extends Activity implements TransferServer.Listener
         renderHistory();
         syncFromReceiver();
         if (!receiver.isRunning() && prefs.receiveAuto()) {
+            syncing = true;
             sw.setChecked(true);
+            syncing = false;
+            tryStart();
         }
     }
 
@@ -124,7 +127,6 @@ public class ReceiveActivity extends Activity implements TransferServer.Listener
         tvIp.setText(Util.localIp());
         tvDevName.setText("设备名：" + prefs.deviceName());
         ReceiveService.start(this);
-        // 服务异步启动，稍后再同步一次状态
         ui.postDelayed(this::syncFromReceiver, 900);
     }
 
@@ -157,9 +159,11 @@ public class ReceiveActivity extends Activity implements TransferServer.Listener
 
     private void syncFromReceiver() {
         boolean running = receiver.isRunning();
-        syncing = true;
-        sw.setChecked(running);
-        syncing = false;
+        if (sw.isChecked() != running) {
+            syncing = true;
+            sw.setChecked(running);
+            syncing = false;
+        }
         if (running) {
             int port = receiver.port();
             String ip = Util.localIp();
@@ -167,6 +171,8 @@ public class ReceiveActivity extends Activity implements TransferServer.Listener
             tvDevName.setText("设备名：" + receiver.deviceName());
             Ui.gone(liveCard, false);
             tvSwitchDesc.setText("已在后台接收，可锁屏或切到其他应用");
+        } else if (sw.isChecked()) {
+            tvSwitchDesc.setText("正在启动接收服务…");
         } else {
             Ui.gone(liveCard, true);
             tvSwitchDesc.setText("关闭后其他设备无法发现本机");
@@ -216,7 +222,10 @@ public class ReceiveActivity extends Activity implements TransferServer.Listener
             syncing = true;
             sw.setChecked(false);
             syncing = false;
-            Toast.makeText(this, "端口被占用，无法开启接收：" + message, Toast.LENGTH_LONG).show();
+            Ui.gone(liveCard, true);
+            tvSwitchDesc.setText("开启失败，点开关重试");
+            Toast.makeText(this, "无法监听端口：" + message
+                    + "。请关闭其他占用同一端口的应用后重试", Toast.LENGTH_LONG).show();
         });
     }
 

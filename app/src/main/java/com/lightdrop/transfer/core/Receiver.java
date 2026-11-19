@@ -19,7 +19,8 @@ public class Receiver implements TransferServer.Listener {
     private final List<TransferServer.Listener> listeners = new CopyOnWriteArrayList<>();
     private TransferServer server;
     private String deviceName = "Android";
-    private int port = 0;
+    private volatile int port = 0;
+    private volatile boolean listening;
 
     private Receiver(Context ctx) {
         appCtx = ctx.getApplicationContext();
@@ -31,7 +32,7 @@ public class Receiver implements TransferServer.Listener {
     }
 
     public boolean isRunning() {
-        return server != null;
+        return listening;
     }
 
     public int port() {
@@ -50,6 +51,8 @@ public class Receiver implements TransferServer.Listener {
     }
 
     public synchronized void stop() {
+        listening = false;
+        port = 0;
         if (server != null) {
             server.stop();
             server = null;
@@ -69,11 +72,16 @@ public class Receiver implements TransferServer.Listener {
     @Override
     public void onListening(int p, String name) {
         port = p;
+        listening = true;
         for (TransferServer.Listener l : listeners) l.onListening(p, name);
     }
 
     @Override
     public void onListenFailed(String message) {
+        listening = false;
+        synchronized (this) {
+            server = null;
+        }
         for (TransferServer.Listener l : listeners) l.onListenFailed(message);
     }
 

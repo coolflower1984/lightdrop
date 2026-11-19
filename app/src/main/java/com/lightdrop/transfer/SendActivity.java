@@ -25,54 +25,65 @@ import com.lightdrop.transfer.net.TransferClient;
 
 import java.io.File;
 import java.io.FileOutputStream;
-import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 public class SendActivity extends Activity {
 
-    private static final int REQ_PICK = 1001;
+    private static final int REQ_PICK_WX = 1001;
+    private static final int REQ_PICK_SYS = 1002;
 
     private final List<TransferClient.Item> items = new ArrayList<>();
     private final Handler ui = new Handler(Looper.getMainLooper());
 
     private LinearLayout deviceContainer;
-    private View emptyHint;
+    private View emptyHint, quickCard, progressCard;
     private TextView tvCount, tvFiles, tvSearchStatus, tvProgressTitle, tvProgressDetail;
+    private TextView tvQuickTitle, tvQuickSub;
     private ProgressBar pbProgress;
-    private View progressCard;
     private EditText etIp;
 
+    private Prefs prefs;
     private volatile boolean scanning;
     private volatile boolean busy;
     private int autoRetries;
-    private long sentBytesAtStart;
     private long sendStartMs;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_send);
+        prefs = new Prefs(this);
 
         deviceContainer = findViewById(R.id.device_container);
         emptyHint = findViewById(R.id.empty_hint);
+        quickCard = findViewById(R.id.quick_card);
+        progressCard = findViewById(R.id.progress_card);
         tvCount = findViewById(R.id.tv_count);
         tvFiles = findViewById(R.id.tv_files);
         tvSearchStatus = findViewById(R.id.tv_search_status);
         tvProgressTitle = findViewById(R.id.tv_progress_title);
         tvProgressDetail = findViewById(R.id.tv_progress_detail);
+        tvQuickTitle = findViewById(R.id.tv_quick_title);
+        tvQuickSub = findViewById(R.id.tv_quick_sub);
         pbProgress = findViewById(R.id.pb_progress);
-        progressCard = findViewById(R.id.progress_card);
         etIp = findViewById(R.id.et_ip);
 
         findViewById(R.id.btn_back).setOnClickListener(v -> finish());
-        findViewById(R.id.pick_card).setOnClickListener(v -> pickFiles());
+        findViewById(R.id.pick_card).setOnClickListener(v -> pickFromWx());
         findViewById(R.id.btn_refresh).setOnClickListener(v -> {
             autoRetries = 0;
             scan();
         });
         findViewById(R.id.btn_connect).setOnClickListener(v -> connectManual());
+        quickCard.setOnClickListener(v -> {
+            if (prefs.hasLastDevice()) {
+                sendTo(prefs.lastIp(), prefs.lastPort(), prefs.lastName());
+            }
+        });
 
         refreshFileUi();
         handleIntent(getIntent());
@@ -89,7 +100,21 @@ public class SendActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == REQ_PICK && resultCode == RESULT_OK && data != null) {
+        if (resultCode != RESULT_OK || data == null) return;
+        if (requestCode == REQ_PICK_WX) {
+            String[] paths = data.getStringArrayExtra(WxPickActivity.EXTRA_PATHS);
+            if (paths == null) return;
+            List<Uri> uris = new ArrayList<>();
+            for (String p : paths) {
+                if (p == null) continue;
+                if (p.startsWith("content://") || p.startsWith("file://")) {
+                    uris.add(Uri.parse(p));
+                } else {
+                    uris.add(Uri.fromFile(new File(p)));
+                }
+            }
+            addUris(uris);
+        } else if (requestCode == REQ_PICK_SYS) {
             List<Uri> uris = new ArrayList<>();
             ClipData clip = data.getClipData();
             if (clip != null) {
@@ -104,21 +129,29 @@ public class SendActivity extends Activity {
         }
     }
 
-    private void pickFiles() {
+    private void pickFromWx() {
+        startActivityForResult(new Intent(this, WxPickActivity.class), REQ_PICK_WX);
+    }
+
+    private void pickSystem() {
         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         i.addCategory(Intent.CATEGORY_OPENABLE);
         i.setType("*/*");
         i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
         try {
-            startActivityForResult(i, REQ_PICK);
+            startActivityForResult(i, REQ_PICK_SYS);
         } catch (Exception e) {
             Toast.makeText(this, "没有可用的文件选择器", Toast.LENGTH_SHORT).show();
         }
     }
 
+    // ---------------- 外部分享 / 打开 ----------------
+
     private void handleIntent(Intent intent) {
         if (intent == null) return;
         String action = intent.getAction();
+        if (action == null) return;
+
         List<Uri> uris = new ArrayList<>();
         if (Intent.ACTION_SEND.equals(action)) {
             Uri u = intent.getParcelableExtra(Intent.EXTRA_STREAM);
@@ -126,13 +159,18 @@ public class SendActivity extends Activity {
             if (uris.isEmpty()) {
                 CharSequence text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT);
                 if (!TextUtils.isEmpty(text)) {
-                    uris.add(writeTextFile(text.toString()));
+                    Uri t = writeTextFile(text.toString());
+                    if (t != null) uris.add(t);
                 }
             }
         } else if (Intent.ACTION_SEND_MULTIPLE.equals(action)) {
             ArrayList<Uri> list = intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
             if (list != null) uris.addAll(list);
+        } else if (Intent.ACTION_VIEW.equals(action)) {
+            Uri u = intent.getData();
+            if (u != null) uris.add(u);
         }
+
         if (uris.isEmpty() && intent.getClipData() != null) {
             ClipData clip = intent.getClipData();
             for (int i = 0; i < clip.getItemCount(); i++) {
@@ -155,23 +193,33 @@ public class SendActivity extends Activity {
     }
 
     private void addUris(final List<Uri> uris) {
+        if (uris.isEmpty()) return;
         tvFiles.setText("正在读取 " + uris.size() + " 个文件…");
         new Thread(() -> {
             final List<TransferClient.Item> added = new ArrayList<>();
-            final List<String> failed = new ArrayList<>();
+            int failed = 0;
+            Set<String> exist = new HashSet<>();
+            for (TransferClient.Item it : items) exist.add(it.name + "|" + it.size);
             for (Uri u : uris) {
                 if (u == null) continue;
                 try {
-                    added.add(TransferClient.resolve(getApplicationContext(), u));
+                    TransferClient.Item it = TransferClient.resolve(getApplicationContext(), u);
+                    if (exist.contains(it.name + "|" + it.size)) continue;
+                    added.add(it);
                 } catch (Exception e) {
-                    failed.add(e.getMessage() == null ? "读取失败" : e.getMessage());
+                    failed++;
                 }
             }
+            final int failCount = failed;
             ui.post(() -> {
                 items.addAll(added);
                 refreshFileUi();
-                if (!failed.isEmpty()) {
-                    Toast.makeText(this, "有 " + failed.size() + " 个文件读取失败", Toast.LENGTH_SHORT).show();
+                if (failCount > 0) {
+                    Toast.makeText(this, "有 " + failCount + " 个文件读取失败", Toast.LENGTH_SHORT).show();
+                }
+                if (!added.isEmpty() && prefs.hasLastDevice()) {
+                    // 从微信「用其他应用打开」进来时，直接给一个一键发送入口
+                    showQuickCard();
                 }
             });
         }, "ld-resolve").start();
@@ -180,7 +228,7 @@ public class SendActivity extends Activity {
     private void refreshFileUi() {
         if (items.isEmpty()) {
             tvCount.setText("未选择");
-            tvFiles.setText("点这里从微信或本地文件中选择，可多选");
+            tvFiles.setText("点这里选文件：微信里刚保存的、下载的、手机里的都在");
             return;
         }
         tvCount.setText(items.size() + " 个 · " + Util.humanSize(TransferClient.totalSize(items)));
@@ -194,20 +242,41 @@ public class SendActivity extends Activity {
         tvFiles.setText(sb.toString());
     }
 
+    private void showQuickCard() {
+        if (!prefs.hasLastDevice() || items.isEmpty()) {
+            Ui.gone(quickCard, true);
+            return;
+        }
+        String nm = prefs.lastName();
+        if (TextUtils.isEmpty(nm)) nm = prefs.lastIp();
+        tvQuickTitle.setText("发送到 " + nm);
+        tvQuickSub.setText("上次连接的设备 · " + prefs.lastIp() + " · 点一下直接发");
+        Ui.gone(quickCard, false);
+    }
+
     // ---------------- 设备发现 ----------------
 
     private void scan() {
         if (scanning || isFinishing() || isDestroyed()) return;
         scanning = true;
         tvSearchStatus.setText("正在搜索同一 Wi-Fi 下的设备…");
+        final String selfIp = Util.localIp();
         new Thread(() -> {
-            final List<DiscoveryClient.Device> list = DiscoveryClient.scan(1800);
-            final String selfIp = Util.localIp();
+            List<DiscoveryClient.Device> list = DiscoveryClient.scan(900);
+            if (list.isEmpty()) {
+                ui.post(() -> {
+                    if (!isFinishing()) {
+                        tvSearchStatus.setText("广播没响应，正在逐个扫描 " + selfIp + " 所在网段…");
+                    }
+                });
+                list = DiscoveryClient.sweep(selfIp, 5000);
+            }
+            final List<DiscoveryClient.Device> result = list;
             ui.post(() -> {
                 scanning = false;
                 if (isFinishing()) return;
                 List<DiscoveryClient.Device> filtered = new ArrayList<>();
-                for (DiscoveryClient.Device d : list) {
+                for (DiscoveryClient.Device d : result) {
                     if (!d.ip.equals(selfIp)) filtered.add(d);
                 }
                 renderDevices(filtered);
@@ -219,12 +288,13 @@ public class SendActivity extends Activity {
         deviceContainer.removeAllViews();
         if (list.isEmpty()) {
             Ui.gone(emptyHint, false);
-            if (autoRetries < 3) {
+            if (autoRetries < 2) {
                 autoRetries++;
                 tvSearchStatus.setText("正在搜索同一 Wi-Fi 下的设备…");
-                ui.postDelayed(this::scan, 2500);
+                ui.postDelayed(this::scan, 2000);
             } else {
-                tvSearchStatus.setText("没找到设备：确认对方已开启「接收文件」，或点右上角刷新");
+                tvSearchStatus.setText("没找到设备。检查：①两台设备连的是同一个 Wi-Fi（不是访客网络）"
+                        + "②平板上「接收文件」开关是打开的 ③平板的微信/系统没把轻传的后台限制掉");
             }
             return;
         }
@@ -248,7 +318,8 @@ public class SendActivity extends Activity {
         rp.bottomMargin = Ui.dp(this, 10);
         row.setLayoutParams(rp);
 
-        String initial = d.name == null || d.name.isEmpty() ? "?" : d.name.substring(0, 1).toUpperCase(Locale.CHINA);
+        String initial = d.name == null || d.name.isEmpty() ? "?"
+                : d.name.substring(0, 1).toUpperCase(Locale.CHINA);
         TextView avatar = Ui.text(this, initial, 16, getColor(R.color.primary), true);
         avatar.setBackgroundResource(R.drawable.bg_chip_soft);
         avatar.setGravity(Gravity.CENTER);
@@ -274,7 +345,7 @@ public class SendActivity extends Activity {
         String raw = etIp.getText().toString().trim();
         DiscoveryClient.Device d = DiscoveryClient.parse(raw);
         if (d == null) {
-            Toast.makeText(this, "请输入正确的 IP 地址", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "请输入正确的 IP 地址，如 192.168.1.23", Toast.LENGTH_SHORT).show();
             return;
         }
         InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
@@ -291,17 +362,16 @@ public class SendActivity extends Activity {
         }
         if (items.isEmpty()) {
             Toast.makeText(this, "先选择要发送的文件", Toast.LENGTH_SHORT).show();
-            pickFiles();
+            pickFromWx();
             return;
         }
         busy = true;
         final int count = items.size();
         final long totalBytes = TransferClient.totalSize(items);
-        sentBytesAtStart = 0;
         sendStartMs = System.currentTimeMillis();
 
         Ui.gone(progressCard, false);
-        tvProgressTitle.setText("正在发送到 " + name);
+        tvProgressTitle.setText("正在连接 " + (TextUtils.isEmpty(name) ? ip : name) + "…");
         pbProgress.setProgress(0);
         tvProgressDetail.setText("0%");
 
@@ -310,16 +380,19 @@ public class SendActivity extends Activity {
         new TransferClient(this, ip, port, snapshot, new TransferClient.Listener() {
             @Override
             public void onConnected() {
+                ui.post(() -> tvProgressTitle.setText("正在发送 " + count + " 个文件…"));
             }
 
             @Override
             public void onFileStart(int index, String fileName) {
-                ui.post(() -> tvProgressTitle.setText("正在发送 " + (index + 1) + "/" + count + "：" + fileName));
+                ui.post(() -> tvProgressTitle.setText(
+                        "正在发送 " + (index + 1) + "/" + count + "：" + fileName));
             }
 
             @Override
             public void onProgress(int index, long done, long total) {
-                final int permille = (int) ((index + (total > 0 ? (double) done / total : 1)) * 1000 / count);
+                final int permille = (int) ((index + (total > 0 ? (double) done / total : 1))
+                        * 1000 / Math.max(1, count));
                 final String detail = String.format(Locale.US, "%d%% · %s / %s",
                         permille / 10, Util.humanSize(done), Util.humanSize(total));
                 ui.post(() -> {
@@ -333,8 +406,9 @@ public class SendActivity extends Activity {
                 final long ms = System.currentTimeMillis() - sendStartMs;
                 ui.post(() -> {
                     busy = false;
-                    pbProgress.setProgress(ok ? 1000 : 0);
                     if (ok) {
+                        prefs.setLastDevice(ip, port, name);
+                        pbProgress.setProgress(1000);
                         tvProgressTitle.setText("发送完成 · " + count + " 个文件");
                         tvProgressDetail.setText(Util.humanSize(totalBytes) + " · 用时 "
                                 + String.format(Locale.US, "%.1f", ms / 1000.0) + " 秒"
@@ -342,14 +416,22 @@ public class SendActivity extends Activity {
                         Toast.makeText(SendActivity.this, "发送成功", Toast.LENGTH_SHORT).show();
                         items.clear();
                         refreshFileUi();
-                        ui.postDelayed(() -> Ui.gone(progressCard, true), 2500);
+                        Ui.gone(quickCard, true);
+                        ui.postDelayed(() -> Ui.gone(progressCard, true), 3000);
                     } else {
+                        pbProgress.setProgress(0);
                         tvProgressTitle.setText("发送失败");
                         tvProgressDetail.setText(message);
-                        Toast.makeText(SendActivity.this, "发送失败：" + message, Toast.LENGTH_LONG).show();
+                        Toast.makeText(SendActivity.this, message, Toast.LENGTH_LONG).show();
                     }
                 });
             }
         }).start();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        showQuickCard();
     }
 }

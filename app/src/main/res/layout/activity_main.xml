@@ -27,7 +27,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp"
-            android:text="局域网直传 · 微信文件不进平板也能到手"
+            android:text="局域网直传 · 不过云端、不耗流量"
             android:textColor="@color/text_secondary"
             android:textSize="13sp" />
 
@@ -60,7 +60,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="6dp"
-                    android:text="微信里点分享，或从本地挑选"
+                    android:text="微信文件、下载、相册，一键到平板"
                     android:textColor="#D3E0FF"
                     android:textSize="13sp" />
             </LinearLayout>

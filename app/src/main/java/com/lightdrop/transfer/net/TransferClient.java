@@ -12,8 +12,11 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.ConnectException;
 import java.net.InetSocketAddress;
+import java.net.NoRouteToHostException;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.util.List;
 
 /** 发送端：连接接收端并推送文件。 */
@@ -61,8 +64,9 @@ public class TransferClient implements Runnable {
         try {
             socket = new Socket();
             socket.connect(new InetSocketAddress(host, port), 8000);
-            socket.setSendBufferSize(256 * 1024);
             socket.setTcpNoDelay(true);
+            socket.setSendBufferSize(256 * 1024);
+            socket.setSoTimeout(30000);
 
             DataOutputStream out = new DataOutputStream(
                     new BufferedOutputStream(socket.getOutputStream(), Protocol.CHUNK));
@@ -71,6 +75,7 @@ public class TransferClient implements Runnable {
 
             out.writeInt(Protocol.MAGIC);
             out.writeInt(Protocol.VERSION);
+            out.writeInt(Protocol.MODE_SEND);
             out.writeInt(items.size());
             for (Item it : items) {
                 out.writeUTF(it.name);
@@ -85,7 +90,7 @@ public class TransferClient implements Runnable {
                     msg = in.readUTF();
                 } catch (Exception ignored) {
                 }
-                if (listener != null) listener.onDone(false, msg);
+                done(false, msg);
                 return;
             }
             if (listener != null) listener.onConnected();
@@ -104,26 +109,41 @@ public class TransferClient implements Runnable {
                     out.write(buf, 0, r);
                     done += r;
                     long now = System.currentTimeMillis();
-                    if (listener != null && (now - last > 120 || done >= it.size)) {
+                    if (listener != null && (now - last > 120)) {
                         last = now;
                         listener.onProgress(i, done, it.size);
                     }
                 }
                 bis.close();
+                if (it.size > 0 && done != it.size) {
+                    throw new IOException("读取 " + it.name + " 时长度不一致（" + done + "/" + it.size + "）");
+                }
                 out.flush();
+                if (listener != null) listener.onProgress(i, it.size, it.size);
             }
-            socket.shutdownOutput();
-            if (listener != null) listener.onDone(true, "");
+            out.flush();
+
+            // 等接收端确认已写盘。这一步是「显示成功但对方没文件」的根治点。
+            socket.setSoTimeout(90000);
+            int result = in.readByte();
+            if (result != 1) {
+                String msg = "接收端保存失败";
+                try {
+                    msg = in.readUTF();
+                } catch (Exception ignored) {
+                }
+                done(false, msg);
+                return;
+            }
+            done(true, "");
+        } catch (SocketTimeoutException e) {
+            done(false, "超时没有响应，检查两台设备是否在同一 Wi-Fi、接收端是否已开启");
+        } catch (ConnectException e) {
+            done(false, "无法连接 " + host + ":" + port + "，确认接收端已开启、且不在访客网络");
+        } catch (NoRouteToHostException e) {
+            done(false, "网络不可达，两台设备可能不在同一网段");
         } catch (Exception e) {
-            String msg;
-            if (e instanceof java.net.ConnectException) {
-                msg = "无法连接，请确认对方已开启接收且在同一 Wi-Fi";
-            } else if (e instanceof java.net.SocketTimeoutException) {
-                msg = "连接超时，检查两台设备是否在同一网络";
-            } else {
-                msg = e.getMessage() == null ? "连接失败" : e.getMessage();
-            }
-            if (listener != null) listener.onDone(false, msg);
+            done(false, e.getMessage() == null ? "传输失败" : e.getMessage());
         } finally {
             if (socket != null) {
                 try {
@@ -134,8 +154,24 @@ public class TransferClient implements Runnable {
         }
     }
 
-    /** 大小未知的 uri（少数微信内容）先落到缓存再发，保证协议能按长度分帧。 */
+    private void done(boolean ok, String msg) {
+        if (listener != null) listener.onDone(ok, msg);
+    }
+
+    /** 大小未知的 uri 先落到缓存再发，保证协议能按长度分帧。 */
     public static Item resolve(Context ctx, Uri uri) throws IOException {
+        // 本地文件直接读属性，避免把几百 MB 的视频再复制一遍到缓存
+        if ("file".equals(uri.getScheme())) {
+            String p = uri.getPath();
+            File f = p == null ? null : new File(p);
+            if (f != null && f.isFile()) {
+                Item local = new Item();
+                local.uri = uri;
+                local.name = f.getName();
+                local.size = f.length();
+                return local;
+            }
+        }
         Item it = new Item();
         it.uri = uri;
         it.name = com.lightdrop.transfer.core.Util.queryName(ctx, uri);
@@ -159,6 +195,14 @@ public class TransferClient implements Runnable {
             it.uri = Uri.fromFile(tmp);
             it.size = total;
         }
+        return it;
+    }
+
+    public static Item fromFile(File f) {
+        Item it = new Item();
+        it.uri = Uri.fromFile(f);
+        it.name = f.getName();
+        it.size = f.length();
         return it;
     }
 

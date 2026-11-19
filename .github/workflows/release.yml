@@ -44,6 +44,7 @@ jobs:
       - name: 构建
         env:
           KEYSTORE_PASS: ${{ secrets.KEYSTORE_PASS }}
+          VERSION_NAME: ${{ github.ref_name }}
         run: bash build.sh
 
       - name: 发布 Release
